@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"><title>Inspección de geometría</title>
+<style>body{background:#15171c;color:#cdd;font:13px monospace;padding:12px;white-space:pre-wrap}</style>
+<script type="importmap">{"imports":{"three":"./vendor/three.module.js","three/addons/":"./vendor/jsm/"}}</script>
+</head><body>
+<div id="out">Cargando…</div>
+<script type="module">
+import * as THREE from 'three';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+const out = document.getElementById('out');
+const log = (...a)=>{ const s=a.join(' '); out.textContent+='\n'+s; console.log(s); };
+out.textContent='';
+
+const loader = new FBXLoader();
+loader.load('assets/model.fbx', (obj)=>{
+  obj.updateMatrixWorld(true);
+  // bbox global (Y-up, ya corregido por FBXLoader)
+  const G = new THREE.Box3().setFromObject(obj);
+  const gsize = G.getSize(new THREE.Vector3());
+  log('GLOBAL bbox min', fmt(G.min), 'max', fmt(G.max), 'size', fmt(gsize));
+  const meshes=[];
+  obj.traverse(c=>{ if(c.isMesh) meshes.push(c); });
+  log('num mallas =', meshes.length);
+  let totalTris=0;
+  meshes.forEach((m,i)=>{
+    const b=new THREE.Box3().setFromObject(m);
+    const c=b.getCenter(new THREE.Vector3());
+    const s=b.getSize(new THREE.Vector3());
+    const g=m.geometry; const pos=g.attributes.position;
+    const tris=(g.index?g.index.count:pos.count)/3;
+    totalTris+=tris;
+    // normalizar centro Y respecto al bbox global (0=pies,1=arriba)
+    const yn=(c.y-G.min.y)/(gsize.y||1);
+    log(`#${i} "${m.name}" verts=${pos.count} tris=${tris.toFixed(0)}`+
+        ` | centroY_norm=${yn.toFixed(2)} center=${fmt(c)} size=${fmt(s)}`);
+  });
+  log('TOTAL tris =', totalTris.toFixed(0));
+  log('LISTO');
+  window.__inspected = true;
+}, undefined, e=>log('ERROR', e));
+
+function fmt(v){ return '['+v.x.toFixed(2)+','+v.y.toFixed(2)+','+v.z.toFixed(2)+']'; }
+</script></body></html>

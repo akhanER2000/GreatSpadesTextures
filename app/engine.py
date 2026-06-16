@@ -95,21 +95,82 @@ def _source_texture():
     return asset("texture_2048.jpg")  # último recurso
 
 
+RECOLORABLE = (1, 2, 3, 4, 5, 6)  # 0=piel y 7=correa/accesorios quedan bloqueados
+
+# Piezas GEOMÉTRICAS (valores del partmap horneado por bake_regions.py)
+GP_HEAD, GP_TORSO, GP_ARM, GP_LEGS, GP_DETAIL = 1, 2, 3, 4, 5
+
+
+def color_props(arr):
+    """Clases de color por téxel para la sub-clasificación dentro de cada pieza."""
+    V, S, chroma, hue = _channels(arr)
+    black = V < 0.14
+    orange = (~black) & (hue >= 5) & (hue <= 33) & (S > 0.5) & (V > 0.4)
+    skin = (~black) & (hue >= 8) & (hue <= 45) & (S >= 0.18) & (S <= 0.5) & (V > 0.5) & ~orange
+    # oliva del chaleco: verde-amarillo SATURADO (el desgaste claro queda fuera -> será uniforme)
+    strong_olive = (~black) & (hue >= 33) & (hue <= 105) & (chroma >= 0.10)
+    return dict(black=black, skin=skin, orange=orange, strong_olive=strong_olive)
+
+
+def combine_regions(gp, arr):
+    """Combina la PIEZA geométrica (gp) con el COLOR -> id de región final.
+    ids: 0 piel/bloq · 1 uniforme · 2 chaleco · 3 botas · 4 cuello · 5 casco
+         6 guantes · 7 correa/accesorio metálico (bloqueado, gris)."""
+    cc = color_props(arr)
+    ids = np.zeros(gp.shape, np.uint8)
+    head = gp == GP_HEAD; torso = gp == GP_TORSO
+    arm = gp == GP_ARM; legs = gp == GP_LEGS; detail = gp == GP_DETAIL
+    nb = ~cc["black"]
+    # CABEZA: gris -> casco; negro -> bloqueado (ojos/correas); piel se fija al final
+    ids[head & nb] = 5
+    ids[head & cc["black"]] = 7
+    # ACCESORIOS de la cabeza (correa barbilla / orejeras): SIEMPRE gris (bloqueado)
+    ids[detail] = 7
+    # TORSO: uniforme por defecto; oliva fuerte -> chaleco; naranja -> cuello; negro -> bloq
+    ids[torso] = 1
+    ids[torso & cc["strong_olive"]] = 2
+    ids[torso & cc["orange"]] = 4
+    ids[torso & cc["black"]] = 7
+    # BRAZOS: uniforme; negro (manos) -> guantes
+    ids[arm] = 1
+    ids[arm & cc["black"]] = 6
+    # PIERNAS: uniforme; negro (pies) -> botas
+    ids[legs] = 1
+    ids[legs & cc["black"]] = 3
+    # CUELLO (collar naranja): su propia región esté donde esté (en cualquier pieza)
+    ids[(gp > 0) & cc["orange"]] = 4
+    # PIEL: nunca se recolorea (prioridad máxima)
+    ids[cc["skin"]] = 0
+    return ids
+
+
+def _load_partmap(W, H):
+    """Carga el partmap (pieza geométrica por téxel) y lo escala a W×H (NEAREST)."""
+    p = asset("partmap_2048.png")
+    if not os.path.exists(p):
+        return None
+    pim = Image.open(p).convert("RGB")
+    if pim.size != (W, H):
+        pim = pim.resize((W, H), Image.NEAREST)
+    return np.asarray(pim)[..., 0].astype(np.int16)
+
+
 def recolor_multi(colors, out_dir, name=None, band=1024):
-    """colors = {region_id(int|str): '#rrggbb'}; region 0 (piel) ignorada."""
+    """colors = {region_id(int|str): '#rrggbb'}; 0 (piel) y 7 (correa) ignoradas."""
     meta = json.load(open(asset("regions_meta.json"), encoding="utf-8"))
     meanL = {int(k): v["meanL"] for k, v in meta["regions"].items()}
-    targets = {int(k): hex_to_rgb01(v) for k, v in colors.items() if int(k) in (1, 2, 3, 4)}
+    targets = {int(k): hex_to_rgb01(v) for k, v in colors.items() if int(k) in RECOLORABLE}
     tlab = {k: rgb_to_lab(c.reshape(1, 1, 3))[0, 0] for k, c in targets.items()}
 
     im = Image.open(_source_texture()).convert("RGB")
     W, H = im.size
     arr = np.asarray(im, np.float32)/255.0
+    gp = _load_partmap(W, H)   # pieza geométrica por téxel (None -> respaldo por color)
     out = np.empty_like(arr)
     for y0 in range(0, H, band):
         sl = slice(y0, min(y0+band, H))
         a = arr[sl]
-        ids = region_ids(a)
+        ids = combine_regions(gp[sl], a) if gp is not None else region_ids(a)
         L = rgb_to_lab(a)[..., 0]
         res = a.copy()
         for rid, t in tlab.items():

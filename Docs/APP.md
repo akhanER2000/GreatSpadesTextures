@@ -28,8 +28,24 @@ empaqueta con PyInstaller → `dist\EditorSoldado.exe` (con icono del soldado).
 Igual que `recolor.py`: en espacio **Lab** conserva la luminancia `L*` (todo el
 detalle de la tela) y sustituye la cromaticidad por la del color objetivo,
 recentrando el brillo. En el visor se hace en la **GPU** (shader) usando un
-**mapa de regiones** (`app/assets/regions_2048.png`) que indica a qué pieza
-pertenece cada téxel; la exportación lo hace en Python a 8192².
+**mapa de regiones** (`app/assets/regions_2048.png`); la exportación lo hace en
+Python a 8192² combinando el partmap con el color.
+
+## Regiones por GEOMETRÍA (separación de piezas)
+Para separar piezas que comparten color (casco↔uniforme, botas↔guantes) y para
+no dejar zonas sin colorear por el desgaste/camuflaje, las regiones se derivan
+de la **geometría del modelo**, no solo del color:
+1. `tools/geom_server.py` + `app/_extract.html` extraen la geometría (vía
+   WebView2/three.js) a `app/assets/geom/`.
+2. `bake_regions.py` clasifica cada triángulo en su pieza (cabeza, torso,
+   brazos, piernas, accesorios) por posición 3D, rasteriza el **partmap** en UV
+   y lo combina con el color (`engine.combine_regions`) para producir las
+   regiones finales (casco, uniforme, chaleco, botas, guantes, cuello; piel y
+   correa de barbilla **bloqueadas**). Dilata para cerrar costuras de las islas UV.
+3. Validado con auditoría 3D multiángulo (`app/_audit.html`, `app/_recaudit.html`).
+
+Mapa malla→pieza (Tripo): part_0=cabeza, part_1=torso, part_2=piernas,
+part_3/part_5=brazos, part_4/part_6=accesorios de la cabeza.
 
 ## Arquitectura
 ```

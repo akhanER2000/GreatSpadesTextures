@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"><title>Auditoría de regiones</title>
+<style>html,body{margin:0;height:100%;background:#202229;overflow:hidden}
+#leg{position:absolute;left:8px;top:8px;font:12px monospace;background:#000a;padding:8px;border-radius:6px}</style>
+<script type="importmap">{"imports":{"three":"./vendor/three.module.js","three/addons/":"./vendor/jsm/"}}</script>
+</head><body>
+<div id="leg"></div>
+<script type="module">
+import * as THREE from 'three';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+const q=new URLSearchParams(location.search);
+const A=parseFloat(q.get('a')||'0')*Math.PI/180, E=parseFloat(q.get('e')||'8')*Math.PI/180;
+
+const PAL=[[0.13,0.13,0.16],[0.23,0.47,1.0],[0.35,0.82,0.35],[0.7,0.12,0.12],
+           [1.0,0.5,0.16],[0.82,0.32,0.88],[0.2,0.82,0.92],[0.96,0.82,0.35]];
+const NAMES=['(bloq/gutter)','uniforme','chaleco','botas','cuello','casco','guantes','correa'];
+document.getElementById('leg').innerHTML = PAL.map((c,i)=>
+  `<div style="color:rgb(${c.map(x=>x*255|0)})">${i} ${NAMES[i]}</div>`).join('');
+
+const r=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});
+r.setSize(innerWidth,innerHeight); r.setClearColor(0x202229,1); document.body.appendChild(r.domElement);
+const sc=new THREE.Scene();
+const cam=new THREE.PerspectiveCamera(42,innerWidth/innerHeight,0.01,100);
+
+const regTex=new THREE.TextureLoader().load('assets/regions_2048.png', t=>{
+  t.flipY=true; t.magFilter=THREE.NearestFilter; t.minFilter=THREE.NearestFilter; t.generateMipmaps=false; t.colorSpace=THREE.NoColorSpace;
+});
+const mat=new THREE.ShaderMaterial({
+  uniforms:{uRegion:{value:regTex}},
+  vertexShader:`varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
+  fragmentShader:`uniform sampler2D uRegion; varying vec2 vUv;
+    vec3 pal(int id){
+      ${PAL.map((c,i)=>`if(id==${i}) return vec3(${c[0]},${c[1]},${c[2]});`).join('\n      ')}
+      return vec3(1.0,0.0,1.0);
+    }
+    void main(){ int id=int(floor(texture2D(uRegion,vUv).r*255.0+0.5)); gl_FragColor=vec4(pal(id),1.0); }`
+});
+
+new FBXLoader().load('assets/model.fbx',(obj)=>{
+  obj.updateMatrixWorld(true);
+  obj.traverse(c=>{ if(c.isMesh) c.material=mat; });
+  sc.add(obj);
+  const box=new THREE.Box3().setFromObject(obj); const s=box.getSize(new THREE.Vector3()); const ctr=box.getCenter(new THREE.Vector3());
+  obj.position.sub(ctr); const m=Math.max(s.x,s.y,s.z); const R=m*1.7;
+  cam.position.set(R*Math.cos(E)*Math.sin(A), R*Math.sin(E), R*Math.cos(E)*Math.cos(A));
+  cam.lookAt(0,0,0); cam.near=m/100; cam.far=m*100; cam.updateProjectionMatrix();
+  const draw=()=>r.render(sc,cam); draw(); setTimeout(draw,200); setTimeout(draw,600);
+  window.__ok=true;
+});
+</script></body></html>

@@ -11,13 +11,18 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 
 // ---- Definición de piezas (id de región en el mapa) -------------------------
+// ids: 1=uniforme 2=chaleco 3=botas 4=cuello 5=casco 6=guantes
+// (0=piel y 7=correa de barbilla quedan BLOQUEADOS: nunca se recolorean)
 const PARTS = [
-  { id:1, name:'Uniforme y casco', sub:'misma tela gris', color:'#2f4f86', on:false },
-  { id:2, name:'Chaleco',           sub:'táctico',         color:'#3c4a23', on:false },
-  { id:3, name:'Botas y guantes',   sub:'mismo negro',     color:'#202026', on:false },
-  { id:4, name:'Cuello',            sub:'detalle',         color:'#8a3b1f', on:false },
+  { id:5, name:'Casco',    sub:'tela / acero', color:'#5a5f66', on:false },
+  { id:1, name:'Uniforme', sub:'tela',         color:'#2f4f86', on:false },
+  { id:2, name:'Chaleco',  sub:'táctico',      color:'#3c4a23', on:false },
+  { id:6, name:'Guantes',  sub:'',             color:'#1d1d22', on:false },
+  { id:3, name:'Botas',    sub:'',             color:'#202026', on:false },
+  { id:4, name:'Cuello',   sub:'detalle',      color:'#8a3b1f', on:false },
 ];
 const partById = Object.fromEntries(PARTS.map(p=>[p.id,p]));
+const NREG = 8;  // ids 0..7
 
 // ---- Lab en JS (sRGB -> linear -> XYZ -> Lab) para el color objetivo --------
 const srgb2lin = c => c<=0.04045 ? c/12.92 : Math.pow((c+0.055)/1.055,2.4);
@@ -39,9 +44,9 @@ const hexToLab = hex => xyzToLab(linRGBtoXYZ(hexToLinRGB(hex)));
 
 // ---- Uniforms compartidos por el material -----------------------------------
 const U = {
-  uActive:    { value: [0,0,0,0,0] },
-  uMeanL:     { value: [0,0,0,0,0] },
-  uTargetLab: { value: Array.from({length:5}, ()=>new THREE.Vector3()) },
+  uActive:    { value: new Array(NREG).fill(0) },
+  uMeanL:     { value: new Array(NREG).fill(0) },
+  uTargetLab: { value: Array.from({length:NREG}, ()=>new THREE.Vector3()) },
 };
 let regionTex = null;
 
@@ -85,9 +90,9 @@ function makeMaterial(baseTex){
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
         uniform sampler2D uRegion;
-        uniform float uActive[5];
-        uniform float uMeanL[5];
-        uniform vec3  uTargetLab[5];
+        uniform float uActive[8];
+        uniform float uMeanL[8];
+        uniform vec3  uTargetLab[8];
         vec3 _lin2xyz(vec3 c){ return vec3(
           dot(c,vec3(0.4124564,0.3575761,0.1804375)),
           dot(c,vec3(0.2126729,0.7151522,0.0721750)),
@@ -112,7 +117,7 @@ function makeMaterial(baseTex){
       .replace('#include <map_fragment>', `#include <map_fragment>
         #ifdef USE_MAP
           int _rid = int(floor(texture2D(uRegion, vMapUv).r*255.0 + 0.5));
-          if(_rid>=1 && _rid<=4 && uActive[_rid]>0.5){
+          if(_rid>=1 && _rid<=6 && uActive[_rid]>0.5){
             diffuseColor.rgb = recolor(diffuseColor.rgb, _rid);
           }
         #endif`);
@@ -168,7 +173,7 @@ async function init(){
     resize();          // primero fija el aspecto correcto del canvas
     frame(obj);        // luego encuadra con ese aspecto
     document.getElementById('loading').style.display='none';
-    setStatus('Modelo cargado · 3 piezas recoloreables', 'ok');
+    setStatus(`Modelo cargado · ${PARTS.length} piezas recoloreables`, 'ok');
   }, undefined, (err)=>{ document.getElementById('loading').textContent='Error al cargar el modelo'; console.error(err); });
 
   buildPanel();
@@ -213,8 +218,8 @@ function buildPanel(){
   // tarjeta de piel bloqueada
   const lock=document.createElement('div');
   lock.className='part locked';
-  lock.innerHTML=`<div class="part-top"><div class="name">Piel y cara <span class="sub">· protegida</span></div>🔒</div>
-    <div class="lockbadge">🔒 La piel nunca se recolorea (bloqueada por diseño)</div>`;
+  lock.innerHTML=`<div class="part-top"><div class="name">Piel, cara y correa <span class="sub">· protegidas</span></div>🔒</div>
+    <div class="lockbadge">🔒 La piel/cara y la correa metálica de la barbilla nunca se recolorean</div>`;
   wrap.appendChild(lock);
 }
 

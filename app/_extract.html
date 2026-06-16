@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"><title>Extraer geometría</title>
+<style>body{background:#15171c;color:#cdd;font:13px monospace;padding:12px;white-space:pre-wrap}</style>
+<script type="importmap">{"imports":{"three":"./vendor/three.module.js","three/addons/":"./vendor/jsm/"}}</script>
+</head><body><div id="out">Cargando…</div>
+<script type="module">
+import * as THREE from 'three';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+const out=document.getElementById('out');
+const log=(...a)=>{out.textContent+='\n'+a.join(' ');console.log(a.join(' '));};
+out.textContent='';
+
+async function post(name, buf){
+  const r = await fetch('/save?name='+encodeURIComponent(name), {method:'POST', body:buf});
+  return r.text();
+}
+
+new FBXLoader().load('assets/model.fbx', async (obj)=>{
+  obj.updateMatrixWorld(true);
+  const G=new THREE.Box3().setFromObject(obj);
+  const meshes=[]; obj.traverse(c=>{ if(c.isMesh) meshes.push(c); });
+  log('mallas=',meshes.length);
+  const manifest={ globalBox:{min:G.min.toArray(), max:G.max.toArray()}, meshes:[] };
+  const v=new THREE.Vector3();
+  for(let i=0;i<meshes.length;i++){
+    const m=meshes[i]; const g=m.geometry; const pos=g.attributes.position; const uv=g.attributes.uv;
+    const n=pos.count;
+    const wp=new Float32Array(n*3);
+    for(let k=0;k<n;k++){ v.fromBufferAttribute(pos,k).applyMatrix4(m.matrixWorld); wp[k*3]=v.x; wp[k*3+1]=v.y; wp[k*3+2]=v.z; }
+    const wu=new Float32Array(n*2);
+    if(uv){ for(let k=0;k<n;k++){ wu[k*2]=uv.getX(k); wu[k*2+1]=uv.getY(k); } }
+    let idx;
+    if(g.index){ idx=new Uint32Array(g.index.array.length); idx.set(g.index.array); }
+    else { idx=new Uint32Array(n); for(let k=0;k<n;k++) idx[k]=k; }
+    await post(`pos_${i}.bin`, wp.buffer);
+    await post(`uv_${i}.bin`, wu.buffer);
+    await post(`idx_${i}.bin`, idx.buffer);
+    const b=new THREE.Box3().setFromObject(m); const c=b.getCenter(new THREE.Vector3()); const s=b.getSize(new THREE.Vector3());
+    manifest.meshes.push({ i, name:m.name, nVerts:n, nIdx:idx.length, hasUV:!!uv,
+      center:c.toArray(), size:s.toArray() });
+    log(`#${i} "${m.name}" verts=${n} tris=${(idx.length/3)|0} center=[${c.x.toFixed(2)},${c.y.toFixed(2)},${c.z.toFixed(2)}]`);
+  }
+  await post('manifest.json', new TextEncoder().encode(JSON.stringify(manifest,null,1)).buffer);
+  log('EXTRACCIÓN COMPLETA');
+  window.__extracted=true;
+}, undefined, e=>log('ERROR',e));
+</script></body></html>

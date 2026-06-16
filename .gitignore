@@ -14,7 +14,9 @@ dist/
 *.spec.bak
 
 # --- Salidas generadas (regenerables con recolor.py) ---
-/Variaciones/
+# Se ignoran las texturas pesadas, pero SÍ se versiona la galería.
+/Variaciones/*
+!/Variaciones/_galeria.png
 
 # --- Activo pesado regenerable (build_assets.py lo copia desde Docs/) ---
 /app/assets/texture_8192.jpg

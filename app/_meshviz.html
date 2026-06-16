@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"><title>Mallas</title>
+<style>html,body{margin:0;height:100%;background:#23272f;overflow:hidden}
+#legend{position:absolute;left:8px;top:8px;color:#fff;font:12px monospace;background:#000a;padding:8px;border-radius:6px}</style>
+<script type="importmap">{"imports":{"three":"./vendor/three.module.js","three/addons/":"./vendor/jsm/"}}</script>
+</head><body><div id="legend"></div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+const COLORS=[0xff3b3b,0x3bff5a,0x3b7bff,0xffe23b,0xff3bf0,0x3bf0ff,0xff9a3b];
+const r=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});
+r.setSize(innerWidth,innerHeight); r.setClearColor(0x23272f,1); document.body.appendChild(r.domElement);
+const sc=new THREE.Scene(); const pivot=new THREE.Group(); sc.add(pivot);
+const cam=new THREE.PerspectiveCamera(42,innerWidth/innerHeight,0.01,100);
+sc.add(new THREE.AmbientLight(0xffffff,1.0)); const d=new THREE.DirectionalLight(0xffffff,1.4); d.position.set(3,5,4); sc.add(d);
+const ctr=new OrbitControls(cam,r.domElement);
+const angle = parseFloat(new URLSearchParams(location.search).get('a')||'0');
+new FBXLoader().load('assets/model.fbx',(obj)=>{
+  obj.updateMatrixWorld(true);
+  let i=0; const leg=document.getElementById('legend'); let html='';
+  obj.traverse(c=>{ if(c.isMesh){ const col=COLORS[i%COLORS.length];
+    c.material=new THREE.MeshStandardMaterial({color:col,roughness:0.7});
+    html+=`<div style="color:#${col.toString(16).padStart(6,'0')}">#${i} ${c.name}</div>`; i++; }});
+  leg.innerHTML=html;
+  pivot.add(obj);
+  const box=new THREE.Box3().setFromObject(obj); const s=box.getSize(new THREE.Vector3()); const c=box.getCenter(new THREE.Vector3());
+  obj.position.sub(c); const m=Math.max(s.x,s.y,s.z);
+  pivot.rotation.y=angle*Math.PI/180;
+  cam.position.set(0,m*0.1,m*1.7); ctr.target.set(0,0,0); ctr.update();
+  cam.near=m/100; cam.far=m*100; cam.updateProjectionMatrix();
+  r.render(sc,cam);
+  ctr.addEventListener('change',()=>r.render(sc,cam));
+});
+</script></body></html>

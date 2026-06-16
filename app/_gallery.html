@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"><title>Galería</title>
+<style>html,body{margin:0;height:100%;background:#23272f;overflow:hidden}</style>
+<script type="importmap">{"imports":{"three":"./vendor/three.module.js","three/addons/":"./vendor/jsm/"}}</script>
+</head><body>
+<script type="module">
+import * as THREE from 'three';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+
+const COLORS=[['azul_marino','#1b2f5e'],['verde_bosque','#2f4a22'],['rojo_sangre','#7a1f1f'],
+              ['arena','#9c8862'],['gris_urbano','#3a4048'],['morado','#3d2a55'],
+              ['negro_tactico','#1a1a1c'],['invierno','#cfd3d6']];
+const COLS=4;
+const W=1600,H=820;
+
+const s2l=c=>c<=0.04045?c/12.92:Math.pow((c+0.055)/1.055,2.4);
+function hexLin(h){h=h.replace('#','');const n=parseInt(h,16);return[s2l(((n>>16)&255)/255),s2l(((n>>8)&255)/255),s2l((n&255)/255)];}
+function lab(h){const[r,g,b]=hexLin(h);const X=0.4124564*r+0.3575761*g+0.1804375*b,Y=0.2126729*r+0.7151522*g+0.072175*b,Z=0.0193339*r+0.119192*g+0.9503041*b;
+ const w=[0.95047,1,1.08883],f=t=>t>0.008856?Math.cbrt(t):7.787*t+16/116;const fx=f(X/w[0]),fy=f(Y/w[1]),fz=f(Z/w[2]);return[116*fy-16,500*(fx-fy),200*(fy-fz)];}
+
+const r=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});
+r.setSize(W,H); r.setPixelRatio(1); r.setClearColor(0x23272f,1); r.outputColorSpace=THREE.SRGBColorSpace; document.body.appendChild(r.domElement);
+const sc=new THREE.Scene();
+sc.add(new THREE.AmbientLight(0xffffff,1.05));
+const k=new THREE.DirectionalLight(0xffffff,1.6);k.position.set(4,5,3);sc.add(k);
+const f2=new THREE.DirectionalLight(0xbcd2ff,0.5);f2.position.set(-3,1,4);sc.add(f2);
+
+const meta=await fetch('assets/regions_meta.json').then(x=>x.json());
+const MEAN=new Array(8).fill(0); for(const[id,info]of Object.entries(meta.regions))MEAN[+id]=info.meanL;
+
+const tl=new THREE.TextureLoader();
+const baseTex=await tl.loadAsync('assets/texture_2048.jpg'); baseTex.colorSpace=THREE.SRGBColorSpace; baseTex.flipY=true; baseTex.anisotropy=r.capabilities.getMaxAnisotropy();
+const regionTex=await tl.loadAsync('assets/regions_2048.png'); regionTex.colorSpace=THREE.NoColorSpace; regionTex.flipY=true; regionTex.magFilter=THREE.NearestFilter; regionTex.minFilter=THREE.NearestFilter; regionTex.generateMipmaps=false;
+
+const FRAG_COMMON=`#include <common>
+ uniform sampler2D uRegion; uniform float uActive[8]; uniform float uMeanL[8]; uniform vec3 uTargetLab[8];
+ vec3 _l2x(vec3 c){return vec3(dot(c,vec3(0.4124564,0.3575761,0.1804375)),dot(c,vec3(0.2126729,0.7151522,0.072175)),dot(c,vec3(0.0193339,0.119192,0.9503041)));}
+ float _f(float t){return t>0.008856?pow(t,1.0/3.0):(7.787*t+16.0/116.0);}
+ vec3 _x2l(vec3 x){vec3 w=vec3(0.95047,1.0,1.08883);vec3 f=vec3(_f(x.x/w.x),_f(x.y/w.y),_f(x.z/w.z));return vec3(116.0*f.y-16.0,500.0*(f.x-f.y),200.0*(f.y-f.z));}
+ float _fi(float t){float d=6.0/29.0;return t>d?t*t*t:3.0*d*d*(t-4.0/29.0);}
+ vec3 _l2xyz(vec3 l){float fy=(l.x+16.0)/116.0,fx=fy+l.y/500.0,fz=fy-l.z/200.0;vec3 w=vec3(0.95047,1.0,1.08883);return vec3(_fi(fx)*w.x,_fi(fy)*w.y,_fi(fz)*w.z);}
+ vec3 _x2lin(vec3 x){return vec3(dot(x,vec3(3.2404542,-1.5371385,-0.4985314)),dot(x,vec3(-0.969266,1.8760108,0.041556)),dot(x,vec3(0.0556434,-0.2040259,1.0572252)));}
+ vec3 recolor(vec3 lin,int id){vec3 L=_x2l(_l2x(lin));vec3 t=uTargetLab[id];float Ln=clamp(t.x+(L.x-uMeanL[id]),0.0,100.0);return clamp(_x2lin(_l2xyz(vec3(Ln,t.y,t.z))),0.0,1.0);}`;
+const FRAG_MAP=`#include <map_fragment>
+ #ifdef USE_MAP
+   int _r=int(floor(texture2D(uRegion,vMapUv).r*255.0+0.5));
+   if(_r>=1&&_r<=6&&uActive[_r]>0.5) diffuseColor.rgb=recolor(diffuseColor.rgb,_r);
+ #endif`;
+
+function makeMat(hex){
+  const U={uActive:{value:new Array(8).fill(0)},uMeanL:{value:MEAN.slice()},uTargetLab:{value:Array.from({length:8},()=>new THREE.Vector3())}};
+  for(const id of [1,5]){U.uActive.value[id]=1;const[L,a,b]=lab(hex);U.uTargetLab.value[id].set(L,a,b);}
+  const m=new THREE.MeshStandardMaterial({map:baseTex,roughness:0.92});
+  m.onBeforeCompile=(sh)=>{sh.uniforms.uRegion={value:regionTex};sh.uniforms.uActive=U.uActive;sh.uniforms.uMeanL=U.uMeanL;sh.uniforms.uTargetLab=U.uTargetLab;
+    sh.fragmentShader=sh.fragmentShader.replace('#include <common>',FRAG_COMMON).replace('#include <map_fragment>',FRAG_MAP);};
+  return m;
+}
+
+new FBXLoader().load('assets/model.fbx',(proto)=>{
+  proto.updateMatrixWorld(true);
+  const box=new THREE.Box3().setFromObject(proto); const sz=box.getSize(new THREE.Vector3()); const ct=box.getCenter(new THREE.Vector3());
+  const m=Math.max(sz.x,sz.y,sz.z);
+  const dz=sz.z*1.25, dy=sz.y*1.18; const rows=Math.ceil(COLORS.length/COLS);
+  const grid=new THREE.Group();
+  COLORS.forEach(([name,hex],i)=>{
+    const c=proto.clone(true);
+    c.traverse(o=>{ if(o.isMesh) o.material=makeMat(hex); });
+    c.position.sub(ct);
+    const col=i%COLS, row=(i/COLS)|0;
+    c.position.z += (col-(COLS-1)/2)*dz;
+    c.position.y += ((rows-1)/2-row)*dy;
+    grid.add(c);
+  });
+  sc.add(grid);
+  const gb=new THREE.Box3().setFromObject(grid); const gs=gb.getSize(new THREE.Vector3());
+  const cam=new THREE.PerspectiveCamera(38,W/H,0.01,200);
+  const dist=Math.max(gs.z/(2*Math.tan(38*Math.PI/360))/ (W/H), gs.y/(2*Math.tan(38*Math.PI/360)))*1.15;
+  cam.position.set(dist,0,0); cam.lookAt(0,0,0); cam.updateProjectionMatrix();
+  const draw=()=>r.render(sc,cam);
+  draw(); setTimeout(draw,300); setTimeout(()=>{ draw();
+    r.domElement.toBlob(b=>{ fetch('/save?name=galeria_render.png',{method:'POST',body:b}).then(()=>{document.title='LISTO';}); },'image/png');
+  },900);
+});
+</script></body></html>
