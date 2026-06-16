@@ -1,0 +1,19 @@
+# Normalización de fin de línea
+* text=auto
+
+# Scripts de Windows: deben ir en CRLF
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.vbs  text eol=crlf
+*.ps1  text eol=crlf
+
+# Binarios (no diff, no normalizar)
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.fbx  binary
+*.fbm  binary
+*.glb  binary
+*.gltf binary
+*.ico  binary
+*.exe  binary

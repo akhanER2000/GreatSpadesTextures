@@ -1,0 +1,25 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# --- Empaquetado (PyInstaller) ---
+build/
+dist/
+*.manifest
+# El .spec sí se versiona (define el build); sus respaldos no:
+*.spec.bak
+
+# --- Salidas generadas (regenerables con recolor.py) ---
+/Variaciones/
+
+# --- Caches de análisis ---
+/Docs/_analysis/__pycache__/
+
+# --- Sistema operativo ---
+Thumbs.db
+desktop.ini
+.DS_Store
