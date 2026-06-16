@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Editor del Soldado — GreatSpades</title>
+<link rel="stylesheet" href="styles.css" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.js",
+    "three/addons/": "./vendor/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app">
+  <!-- VISOR 3D -->
+  <div id="viewer">
+    <div class="toolbar">
+      <button id="btnReset">↺ Vista</button>
+      <button id="btnAuto">⟳ Girar</button>
+    </div>
+    <div id="hint">Arrastra para rotar · rueda para zoom · clic derecho para desplazar</div>
+    <div id="loading"><div class="spinner"></div><div>Cargando modelo 3D…</div></div>
+  </div>
+
+  <!-- PANEL DE CONFIGURACIÓN -->
+  <aside id="panel">
+    <div class="panel-head">
+      <h1>Editor del Soldado</h1>
+      <p>Cambia el color de cada pieza preservando el detalle de la tela.</p>
+    </div>
+    <div class="panel-body" id="parts">
+      <div class="section-title">Piezas recoloreables</div>
+      <!-- las tarjetas de partes se generan en app.js -->
+    </div>
+    <div class="panel-foot">
+      <div id="status"></div>
+      <button class="ghost" id="btnResetAll">Restablecer todo</button>
+      <button class="primary" id="btnExport">Exportar textura (8192²)</button>
+    </div>
+  </aside>
+</div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

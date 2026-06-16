@@ -16,6 +16,9 @@ dist/
 # --- Salidas generadas (regenerables con recolor.py) ---
 /Variaciones/
 
+# --- Activo pesado regenerable (build_assets.py lo copia desde Docs/) ---
+/app/assets/texture_8192.jpg
+
 # --- Caches de análisis ---
 /Docs/_analysis/__pycache__/
 

@@ -3,6 +3,14 @@
 Genera versiones del soldado con **distinto color de uniforme y casco**
 manteniendo intactos los detalles de la tela y el resto de elementos.
 
+## 🖥️ App de escritorio (Editor del Soldado)
+Aplicación con **visor 3D** y panel de colores en tiempo real. Doble clic en
+**`dist\EditorSoldado.exe`** (o en `start.vbs`). Para generarlo: `construir_exe.bat`.
+Detalles en [Docs/APP.md](Docs/APP.md). El resto de este README cubre la
+herramienta de línea de comandos `recolor.py`.
+
+---
+
 ## Requisitos
 - Python 3.x con `numpy` y `Pillow` (ya disponibles en este entorno).
 
