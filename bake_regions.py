@@ -47,10 +47,31 @@ def load_geom():
     return meshes, np.array(gb["min"]), np.array(gb["max"])
 
 
-# ---------- clasificación por color (téxel) ----------
-def color_classes(arr):
-    R, G, B = arr[..., 0], arr[..., 1], arr[..., 2]
-    mx = arr.max(-1); mn = arr.min(-1); V = mx; chroma = mx - mn
+# =====================  PARÁMETROS (afinados con subagentes)  ===============
+PART_BY_MESH = {0: "detail", 1: "legs", 2: "arm", 3: "detail",
+                4: "arm", 5: "torso", 6: "head"}
+# Color
+BLACK_V      = 0.14          # negro (botas/guantes/correas)
+OLIVE_HUE    = (33, 115)     # oliva (chaleco/mochila)
+OLIVE_CHROMA = 0.05          # oliva incluso oscuro/desgastado
+# Cara (geometría): triángulos frontales de la cabeza -> bloqueados.
+# La normal.x NO es fiable (winding inconsistente del FBX): se usa la PROFUNDIDAD
+# frontal cxn (la cara está adelante, cxn alto; el casco gris detrás, cxn bajo).
+FACE_CXN = 0.79              # profundidad frontal mínima (centroide X normalizado)
+FACE_Y   = (0.77, 0.875)    # banda de altura de la cara (yhi=0.875 = corte cara/ala)
+FACE_ZW  = 0.11             # |czn-0.5| máximo (central)
+CUELLO_CYN = 0.78            # naranja -> cuello solo en parte alta del torso (cuello)
+BOOT_Y = 0.17               # botas: negro solo en los PIES (cyn bajo); el negro
+                            # de ingle/rodilla queda bloqueado (cremalleras/broches)
+# clases de color (enteros)
+C_GRAY, C_SKIN, C_OLIVE, C_BLACK, C_ORANGE = 0, 1, 2, 3, 4
+
+
+# ---------- clasificación de color de MUESTRAS RGB (vectorizada) ----------
+def classify_rgb(rgb):
+    """rgb (...,3) en [0,1] -> etiqueta entera por píxel/muestra."""
+    R, G, B = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+    mx = rgb.max(-1); mn = rgb.min(-1); V = mx; chroma = mx - mn
     S = np.where(mx > 1e-6, chroma / np.maximum(mx, 1e-6), 0.0)
     d = np.where(chroma < 1e-6, 1.0, chroma)
     rc = (mx - R) / d; gc = (mx - G) / d; bc = (mx - B) / d
@@ -58,16 +79,95 @@ def color_classes(arr):
     ir = mx == R; ig = (mx == G) & ~ir; ib = (mx == B) & ~ir & ~ig
     h[ir] = (bc - gc)[ir]; h[ig] = (2 + rc - bc)[ig]; h[ib] = (4 + gc - rc)[ib]
     hue = (h / 6.0) % 1.0 * 360.0
-    black = V < 0.14
-    skin = (~black) & (hue >= 8) & (hue <= 45) & (S >= 0.18) & (S <= 0.5) & (V > 0.5)
-    orange = (~black) & (hue >= 5) & (hue <= 33) & (S > 0.5) & (V > 0.4)
-    return dict(V=V, S=S, chroma=chroma, hue=hue, black=black, skin=skin, orange=orange)
+    warm = (G - B) > 0.012          # oliva = cálido (G>B); gris neutro y negro no
+    lab = np.zeros(V.shape, np.int8)  # gris por defecto
+    # oliva (chaleco/mochila): nítido O desgastado cálido (lo que antes se fugaba)
+    olive = (hue >= 30) & (hue <= 118) & ((chroma >= 0.06) | ((chroma >= 0.025) & warm))
+    orange = (hue >= 5) & (hue <= 33) & (S > 0.45) & (V > 0.4)
+    skin = (hue >= 8) & (hue <= 45) & (S >= 0.18) & (S <= 0.55) & (V > 0.5) & ~orange
+    lab[olive] = C_OLIVE
+    lab[skin] = C_SKIN
+    lab[orange] = C_ORANGE
+    lab[V < BLACK_V] = C_BLACK     # negro tiene prioridad...
+    # ...salvo oliva OSCURO cálido (sombra del chaleco): se rescata como oliva
+    dark_olive = (V < BLACK_V) & warm & (hue >= 30) & (hue <= 118) & (chroma >= 0.02)
+    lab[dark_olive] = C_OLIVE
+    return lab
+
+
+# ---------- color DOMINANTE por triángulo (muestreo de varios puntos) ----------
+def triangle_dominant(mesh, texarr):
+    H, W = texarr.shape[:2]
+    uv = mesh["uv"]; idx = mesh["idx"]
+    if uv.shape[0] == 0 or idx.shape[0] == 0:
+        return np.zeros(idx.shape[0], np.int8)
+    v0, v1, v2 = uv[idx[:, 0]], uv[idx[:, 1]], uv[idx[:, 2]]
+    cen = (v0 + v1 + v2) / 3.0
+    pts = [cen, (v0+v1)/2, (v1+v2)/2, (v2+v0)/2,
+           0.6*v0+0.4*cen, 0.6*v1+0.4*cen, 0.6*v2+0.4*cen]
+    M = idx.shape[0]
+    counts = np.zeros((5, M), np.int32)
+    for p in pts:
+        px = np.clip((p[:, 0] * (W - 1)).astype(int), 0, W - 1)
+        py = np.clip(((1.0 - p[:, 1]) * (H - 1)).astype(int), 0, H - 1)
+        lab = classify_rgb(texarr[py, px])
+        for c in range(5):
+            counts[c] += (lab == c)
+    return counts.argmax(0).astype(np.int8)
+
+
+# ---------- geometría por triángulo (normal + centroide normalizado) ----------
+def triangle_geo(mesh, gmin, gmax):
+    pos = mesh["pos"]; idx = mesh["idx"]
+    p0, p1, p2 = pos[idx[:, 0]], pos[idx[:, 1]], pos[idx[:, 2]]
+    n = np.cross(p1 - p0, p2 - p0)
+    n = n / np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-9)
+    cen = (p0 + p1 + p2) / 3.0
+    cn = (cen - gmin) / np.maximum(gmax - gmin, 1e-6)
+    return n, cn
+
+
+# ---------- región final por triángulo (malla + color + geometría) ----------
+FACE_LOCK = 8   # id interno para 'bloqueado por cara/piel/accesorio' (se mapea a 0 al final)
+
+
+def classify_mesh(part, n, cn, dom, face_y):
+    M = dom.shape[0]
+    cxn = cn[:, 0]; cyn = cn[:, 1]; czn = cn[:, 2]
+    reg = np.zeros(M, np.uint8)
+    if part == "detail":
+        reg[:] = FACE_LOCK               # correa/oreja: siempre original (bloqueado)
+        return reg
+    if part == "head":
+        is_face = (cxn > FACE_CXN) & (cyn >= face_y[0]) & (cyn <= face_y[1]) & (np.abs(czn-0.5) < FACE_ZW)
+        reg[:] = 5                       # casco
+        reg[is_face] = FACE_LOCK         # CARA bloqueada (incluye cejas/ojos)
+        reg[dom == C_SKIN] = FACE_LOCK   # piel siempre bloqueada
+        return reg
+    if part == "torso":
+        reg[:] = 1                       # uniforme (chaqueta)
+        reg[dom == C_OLIVE] = 2          # chaleco/mochila
+        reg[dom == C_BLACK] = 7          # correas (bloqueado)
+        reg[(dom == C_ORANGE) & (cyn > CUELLO_CYN)] = 4  # cuello
+        reg[dom == C_SKIN] = FACE_LOCK
+        return reg
+    if part == "arm":
+        reg[:] = 1                       # brazo = uniforme (no hay piel real aquí)
+        reg[dom == C_BLACK] = 6          # guantes
+        return reg
+    if part == "legs":
+        reg[:] = 1                       # pierna = uniforme (no hay piel real aquí)
+        black = dom == C_BLACK
+        reg[black & (cyn < BOOT_Y)] = 3          # botas (solo los pies)
+        reg[black & (cyn >= BOOT_Y)] = 7         # herraje negro (ingle/rodilla) bloqueado
+        return reg
+    return reg
 
 
 # ---------- rasterización de triángulos en UV -> mapa de pieza ----------
-def rasterize_parts(meshes, part_of_tri, res, flipv=True):
-    """part_of_tri: lista por malla de arrays (nTris,) con el id de pieza geométrica."""
-    part = np.zeros((res, res), np.int16)  # 0 = sin pieza
+def rasterize_parts(meshes, part_of_tri, res, flipv=True, init=0):
+    """part_of_tri: lista por malla de arrays (nTris,) con el id de región por triángulo."""
+    part = np.full((res, res), init, np.int16)  # init = sin asignar (gutter)
     for mi, m in enumerate(meshes):
         uv = m["uv"]; idx = m["idx"]; parts = part_of_tri[mi]
         if uv.shape[0] == 0:
@@ -108,87 +208,84 @@ def tri_centroids_norm(m, gmin, gmax):
     return (cen - gmin) / size, cen
 
 
-# Mapeo malla(i del manifest) -> PIEZA geométrica (confirmado visualmente):
-#  head=1 torso=2 arm=3 legs=4 detail(correa/oreja)=5
-PART_BY_MESH = {0: 5, 1: 4, 2: 3, 3: 5, 4: 3, 5: 2, 6: 1}
 SIZE = 2048
 
 
-def bake():
-    sys.path.insert(0, os.path.join(ROOT, "app"))
-    import engine
+def _rgb_to_L(tex):
+    """L* (perceptual) para meta; misma fórmula que engine."""
+    def s2l(c): return np.where(c <= 0.04045, c/12.92, ((c+0.055)/1.055)**2.4)
+    lin = s2l(tex)
+    Y = lin[..., 0]*0.2126729 + lin[..., 1]*0.7151522 + lin[..., 2]*0.0721750
+    return np.where(Y > 0.008856, 116*np.cbrt(Y)-16, 903.3*Y)
 
+
+def bake():
     meshes, gmin, gmax = load_geom()
     print("GLOBAL size", (gmax-gmin).round(3))
-    part_of_tri = []
-    for m in meshes:
-        pid = PART_BY_MESH.get(m["i"], 0)
-        part_of_tri.append(np.full(m["idx"].shape[0], pid, np.int16))
-        print(f"  #{m['i']} {m['name']:16s} -> pieza {pid}  (tris={m['idx'].shape[0]})")
-
-    print("Rasterizando partmap (UV)...")
-    gp = rasterize_parts(meshes, part_of_tri, SIZE, flipv=True)
-    print("  cobertura partmap (cruda):", f"{100*(gp>0).mean():.1f}%")
-
-    # Dilatar para cerrar costuras finas (gp=0 entre triángulos/islas):
-    # rellena solo los píxeles vacíos con el id del vecino, sin mover bordes existentes.
-    from PIL import ImageFilter
-    for _ in range(3):
-        zero = gp == 0
-        if not zero.any():
-            break
-        grown = np.asarray(Image.fromarray(gp.astype(np.uint8)).filter(ImageFilter.MaxFilter(3)))
-        gp = np.where(zero, grown.astype(np.int16), gp)
-    print("  cobertura partmap (dilatada):", f"{100*(gp>0).mean():.1f}%")
-
-    # guardar partmap (R = id de pieza)
-    pm = np.zeros((SIZE, SIZE, 3), np.uint8); pm[..., 0] = gp.astype(np.uint8)
-    pm[..., 1] = (gp * 40).astype(np.uint8)
-    Image.fromarray(pm).save(os.path.join(ASSETS, "partmap_2048.png"))
-
-    # textura base 2048 y combinación geometría+color -> regiones finales
     tex = np.asarray(Image.open(os.path.join(ASSETS, "texture_2048.jpg")).convert("RGB"),
                      np.float32) / 255.0
-    ids = engine.combine_regions(gp, tex)
-    reg = np.zeros((SIZE, SIZE, 3), np.uint8); reg[..., 0] = ids; reg[..., 1] = (ids * 30).astype(np.uint8)
+
+    # Banda de altura de la cara: fija (calibrada por el análisis de la malla #6).
+    # yhi=0.875 es el corte limpio cara/ala del casco (subirlo dispara el gris).
+    face_y = FACE_Y
+
+    # Región final POR TRIÁNGULO (malla + color dominante + geometría)
+    region_of_tri = []
+    for m in meshes:
+        part = PART_BY_MESH.get(m["i"], "detail")
+        n, cn = triangle_geo(m, gmin, gmax)
+        dom = triangle_dominant(m, tex)
+        reg = classify_mesh(part, n, cn, dom, face_y)
+        region_of_tri.append(reg.astype(np.int16))
+        cnt = {NAMES.get(int(r) if r != FACE_LOCK else 0, "bloq"): int((reg == r).sum())
+               for r in np.unique(reg)}
+        print(f"  #{m['i']} {m['name']:14s} {part:7s} tris={len(reg):5d}  {cnt}")
+
+    print("Rasterizando regiones por triángulo...")
+    raw = rasterize_parts(meshes, region_of_tri, SIZE, flipv=True, init=0)  # 0 = gutter
+
+    # Dilatar SOLO el gutter (0); la cara va con id 8, así no se la come la dilatación.
+    from PIL import ImageFilter
+    for _ in range(3):
+        gut = raw == 0
+        if not gut.any():
+            break
+        grown = np.asarray(Image.fromarray(raw.astype(np.uint8)).filter(ImageFilter.MaxFilter(3)))
+        raw = np.where(gut, grown.astype(np.int16), raw)
+    ids = raw.astype(np.uint8)
+    ids[ids == FACE_LOCK] = 0          # cara/piel/accesorios -> 0 (bloqueado)
+
+    reg = np.zeros((SIZE, SIZE, 3), np.uint8)
+    reg[..., 0] = ids; reg[..., 1] = (ids * 30).astype(np.uint8)
     Image.fromarray(reg).save(os.path.join(ASSETS, "regions_2048.png"))
 
-    # meta: brillo medio L* por región (para recentrar al recolorear)
-    L = engine.rgb_to_lab(tex)[..., 0]
+    # meta: brillo medio L* por región
+    L = _rgb_to_L(tex)
     meta = {"size": SIZE, "flipY": True, "regions": {}}
     for rid in range(1, 8):
-        m = ids == rid
+        mm = ids == rid
         meta["regions"][str(rid)] = {"name": NAMES.get(rid, str(rid)),
-            "meanL": float(L[m].mean()) if m.any() else 50.0,
-            "pct": float(100 * m.mean())}
+            "meanL": float(L[mm].mean()) if mm.any() else 50.0,
+            "pct": float(100 * mm.mean())}
     json.dump(meta, open(os.path.join(ASSETS, "regions_meta.json"), "w", encoding="utf-8"),
               indent=2, ensure_ascii=False)
 
     print("Regiones finales (% del atlas):")
     for rid in range(0, 8):
-        print(f"  {rid} {NAMES.get(rid,'-'):9s}: {100*(ids==rid).mean():5.1f}%")
+        print(f"  {rid} {NAMES.get(rid, '-'):9s}: {100*(ids == rid).mean():5.1f}%")
 
     # visualización de auditoría (color por región sobre luminancia)
-    PAL = {0:(40,40,46),1:(60,120,255),2:(90,200,90),3:(20,20,20),
-           4:(255,120,40),5:(200,80,220),6:(60,60,70),7:(240,210,90)}
-    lum = (0.2126*tex[...,0]+0.7152*tex[...,1]+0.0722*tex[...,2])
+    PAL = {1:(60,120,255), 2:(90,200,90), 3:(200,40,40), 4:(255,150,30),
+           5:(200,80,220), 6:(40,210,230), 7:(240,210,90)}
+    lum = (0.2126*tex[..., 0]+0.7152*tex[..., 1]+0.0722*tex[..., 2])
     viz = np.stack([lum]*3, -1)
     for rid, col in PAL.items():
-        if rid == 0: continue
-        m = ids == rid
-        viz[m] = viz[m]*0.25 + np.array(col, np.float32)/255.0*0.75
-    Image.fromarray((viz*255).astype(np.uint8)).resize((1024,1024)).save(
+        mm = ids == rid
+        viz[mm] = viz[mm]*0.25 + np.array(col, np.float32)/255.0*0.75
+    Image.fromarray((viz*255).astype(np.uint8)).resize((1024, 1024)).save(
         os.path.join(ROOT, "Docs", "_analysis", "regions_debug.png"))
-    print("OK -> partmap_2048.png, regions_2048.png, regions_meta.json, Docs/_analysis/regions_debug.png")
+    print("OK -> regions_2048.png, regions_meta.json, Docs/_analysis/regions_debug.png")
 
 
 if __name__ == "__main__":
-    if "--inspect" in sys.argv:
-        meshes, gmin, gmax = load_geom()
-        print("GLOBAL min", gmin.round(3), "max", gmax.round(3), "size", (gmax-gmin).round(3))
-        for m in meshes:
-            cn = (m["center"] - gmin) / np.maximum(gmax - gmin, 1e-6)
-            print(f"  #{m['i']:2d} {m['name']:20s} verts={m['pos'].shape[0]:6d} "
-                  f"tris={m['idx'].shape[0]:6d} centroY_norm={cn[1]:.2f} cx_norm={cn[0]:.2f}")
-    else:
-        bake()
+    bake()

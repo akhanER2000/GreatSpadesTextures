@@ -144,15 +144,16 @@ def combine_regions(gp, arr):
     return ids
 
 
-def _load_partmap(W, H):
-    """Carga el partmap (pieza geométrica por téxel) y lo escala a W×H (NEAREST)."""
-    p = asset("partmap_2048.png")
+def _load_region_map(W, H):
+    """Carga el mapa de regiones FINAL (id por téxel, horneado por triángulo) y
+    lo escala a W×H con NEAREST (regiones sólidas; sin mezclar ids)."""
+    p = asset("regions_2048.png")
     if not os.path.exists(p):
         return None
-    pim = Image.open(p).convert("RGB")
-    if pim.size != (W, H):
-        pim = pim.resize((W, H), Image.NEAREST)
-    return np.asarray(pim)[..., 0].astype(np.int16)
+    rim = Image.open(p).convert("RGB")
+    if rim.size != (W, H):
+        rim = rim.resize((W, H), Image.NEAREST)
+    return np.asarray(rim)[..., 0].astype(np.int16)
 
 
 def recolor_multi(colors, out_dir, name=None, band=1024):
@@ -165,12 +166,12 @@ def recolor_multi(colors, out_dir, name=None, band=1024):
     im = Image.open(_source_texture()).convert("RGB")
     W, H = im.size
     arr = np.asarray(im, np.float32)/255.0
-    gp = _load_partmap(W, H)   # pieza geométrica por téxel (None -> respaldo por color)
+    region_full = _load_region_map(W, H)   # id de región por téxel (None -> respaldo color)
     out = np.empty_like(arr)
     for y0 in range(0, H, band):
         sl = slice(y0, min(y0+band, H))
         a = arr[sl]
-        ids = combine_regions(gp[sl], a) if gp is not None else region_ids(a)
+        ids = region_full[sl] if region_full is not None else region_ids(a)
         L = rgb_to_lab(a)[..., 0]
         res = a.copy()
         for rid, t in tlab.items():

@@ -31,18 +31,26 @@ recentrando el brillo. En el visor se hace en la **GPU** (shader) usando un
 **mapa de regiones** (`app/assets/regions_2048.png`); la exportación lo hace en
 Python a 8192² combinando el partmap con el color.
 
-## Regiones por GEOMETRÍA (separación de piezas)
-Para separar piezas que comparten color (casco↔uniforme, botas↔guantes) y para
-no dejar zonas sin colorear por el desgaste/camuflaje, las regiones se derivan
-de la **geometría del modelo**, no solo del color:
+## Regiones por GEOMETRÍA (clasificación POR TRIÁNGULO)
+Para separar piezas que comparten color (casco↔uniforme, botas↔guantes), no
+dejar zonas sin colorear por el desgaste, y evitar “manchas” por píxel, cada
+**triángulo** recibe UNA sola región (resultado sólido, sin motas):
 1. `tools/geom_server.py` + `app/_extract.html` extraen la geometría (vía
    WebView2/three.js) a `app/assets/geom/`.
-2. `bake_regions.py` clasifica cada triángulo en su pieza (cabeza, torso,
-   brazos, piernas, accesorios) por posición 3D, rasteriza el **partmap** en UV
-   y lo combina con el color (`engine.combine_regions`) para producir las
-   regiones finales (casco, uniforme, chaleco, botas, guantes, cuello; piel y
-   correa de barbilla **bloqueadas**). Dilata para cerrar costuras de las islas UV.
-3. Validado con auditoría 3D multiángulo (`app/_audit.html`, `app/_recaudit.html`).
+2. `bake_regions.py`: para cada triángulo toma (a) su **malla/pieza**, (b) su
+   **color dominante** (muestreado en 7 puntos del triángulo) y (c) su
+   **geometría**. Reglas clave:
+   - **Cara 100% bloqueada** por geometría: triángulos frontales de la cabeza
+     (`cxn>0.79`, banda de altura `0.77–0.875`, central) → nunca se recolorean
+     (incluye cejas/ojos/mentón, aunque no sean color piel).
+   - **Chaleco/mochila** = oliva (test “cálido” G>B, captura el oliva oscuro).
+   - **Brazos/piernas** = todo lo no-negro → uniforme; negro = guantes (brazos)
+     o botas (solo en los pies; el negro de ingle/rodilla queda bloqueado).
+   - Piel, correa de barbilla y herrajes negros → bloqueados.
+   Rasteriza por triángulo y dilata el *gutter* sin comerse la cara.
+3. `engine.py` exporta cargando ese mapa final (NEAREST a 8192²) y aplicando Lab.
+4. Validado con auditoría 3D multiángulo (`app/_audit.html`, `_recaudit.html`,
+   `_multiaudit.html`), incl. test de **casco blanco** (la cara no cambia).
 
 Mapa malla→pieza (Tripo): part_0=cabeza, part_1=torso, part_2=piernas,
 part_3/part_5=brazos, part_4/part_6=accesorios de la cabeza.

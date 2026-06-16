@@ -11,7 +11,7 @@ const q=new URLSearchParams(location.search);
 const A=parseFloat(q.get('a')||'0')*Math.PI/180, E=parseFloat(q.get('e')||'8')*Math.PI/180;
 
 // colores distintos por región para la auditoría (id -> hex)
-const COL={1:'#1f5fd0',2:'#2e9d3a',3:'#d35400',4:'#00b3b3',5:'#c0392b',6:'#7b30b8'};
+const COL={1:'#1f5fd0',2:'#2e9d3a',3:'#d35400',4:'#00b3b3',5:'#f2f2f2',6:'#7b30b8'};
 const NAM={1:'uniforme',2:'chaleco',3:'botas',4:'cuello',5:'casco',6:'guantes'};
 document.getElementById('leg').innerHTML=Object.keys(COL).map(k=>
   `<div style="color:${COL[k]}">${k} ${NAM[k]}</div>`).join('')+
